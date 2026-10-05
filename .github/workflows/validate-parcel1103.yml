@@ -27,9 +27,9 @@ jobs:
           const Vinyl = require('vinyl');
           const gulpParcel = require(process.cwd());
 
-          function runTransform(inputPath) {
+          function runTransform(inputPath, outFile) {
             return new Promise((resolve, reject) => {
-              const stream = gulpParcel({ watch: false, production: true });
+              const stream = gulpParcel({ watch: false, production: true, outFile });
               const output = [];
               let errors = 0;
               const timer = setTimeout(() => reject(new Error('transform timeout')), 30000);
@@ -55,18 +55,18 @@ jobs:
 
           (async () => {
             const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gulp-parcel-1103-'));
-            const ok = path.join(root, 'entry.ts');
-            fs.writeFileSync(ok, 'const value: number = 42; console.log(value);\n');
-            const success = await runTransform(ok);
+            const ok = path.join(root, 'entry.js');
+            fs.writeFileSync(ok, 'const value = 42; console.log(value);\n');
+            const success = await runTransform(ok, 'renamed.bundle.js');
             if (success.error) throw success.error;
             if (success.output.length !== 1) throw new Error('expected exactly one successful Vinyl output, got ' + success.output.length);
             const out = success.output[0];
-            if (path.extname(out.path) !== '.js') throw new Error('expected Parcel to rename .ts to .js, got ' + out.path);
+            if (path.basename(out.path) !== 'renamed.bundle.js') throw new Error('expected Parcel outFile path renamed.bundle.js, got ' + out.path);
             if (!out.contents || !out.contents.length) throw new Error('expected compiled output bytes');
 
             const bad = path.join(root, 'broken.js');
             fs.writeFileSync(bad, 'const = ;\n');
-            const failure = await runTransform(bad);
+            const failure = await runTransform(bad, 'broken.bundle.js');
             if (!failure.error) throw new Error('expected broken Parcel build to reach stream error path');
             if (failure.errors !== 1) throw new Error('expected exactly one error callback, got ' + failure.errors);
             if (failure.output.length !== 0) throw new Error('failing build emitted duplicate/output Vinyl files: ' + failure.output.length);
