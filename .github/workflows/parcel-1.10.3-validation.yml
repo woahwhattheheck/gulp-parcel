@@ -1,0 +1,91 @@
+name: Parcel 1.10.3 compatibility
+
+on:
+  push:
+    branches:
+      - validation/issue12-parcel1103
+
+permissions:
+  contents: read
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '14.21.3'
+      - name: Install exact Parcel runtime and fixture dependency
+        run: |
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund parcel-bundler@1.10.3 vinyl@2.2.1
+          node -e "const p=require('parcel-bundler/package.json'); if(p.version!=='1.10.3') throw new Error('expected Parcel 1.10.3, got '+p.version)"
+      - name: Run real plugin success and failure paths
+        run: |
+          node <<'NODE'
+          const fs = require('fs');
+          const os = require('os');
+          const path = require('path');
+          const Vinyl = require('vinyl');
+          const gulpParcel = require('./index.js');
+
+          function runTransform(entry) {
+            return new Promise((resolve, reject) => {
+              const file = new Vinyl({
+                cwd: path.dirname(entry),
+                base: path.dirname(entry),
+                path: entry,
+                contents: null
+              });
+              const stream = gulpParcel({watch: false, production: true});
+              const outputs = [];
+              let settled = false;
+              const timer = setTimeout(() => {
+                if (!settled) reject(new Error('transform timed out'));
+              }, 30000);
+              const finish = result => {
+                if (settled) return;
+                settled = true;
+                clearTimeout(timer);
+                resolve(result);
+              };
+              stream.on('data', out => outputs.push(out));
+              stream.once('error', error => finish({error, outputs}));
+              stream.once('finish', () => finish({error: null, outputs}));
+              stream.end(file);
+            });
+          }
+
+          (async () => {
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gulp-parcel-1103-'));
+            const ok = path.join(root, 'renamed-source.js');
+            fs.writeFileSync(ok, 'module.exports = 42;\n');
+            const success = await runTransform(ok);
+            if (success.error) throw success.error;
+            if (success.outputs.length !== 1) throw new Error('expected exactly one successful Vinyl output, got ' + success.outputs.length);
+            const out = success.outputs[0];
+            if (!Buffer.isBuffer(out.contents) || out.contents.length === 0) throw new Error('successful output has no bundle bytes');
+            if (path.extname(out.path) !== '.js') throw new Error('unexpected emitted extension: ' + out.path);
+
+            const bad = path.join(root, 'broken-entry.js');
+            fs.writeFileSync(bad, "require('./definitely-missing-module');\n");
+            const failure = await runTransform(bad);
+            if (!failure.error) throw new Error('expected failing Parcel build to reach stream error path');
+            if (failure.outputs.length !== 0) throw new Error('failing build emitted duplicate/partial Vinyl output');
+
+            console.log(JSON.stringify({
+              parcel: require('parcel-bundler/package.json').version,
+              successfulOutputs: success.outputs.length,
+              successfulBytes: out.contents.length,
+              successfulName: path.basename(out.path),
+              failingOutputs: failure.outputs.length,
+              failureName: failure.error.name,
+              failureMessage: String(failure.error.message || failure.error).slice(0, 300)
+            }, null, 2));
+          })().catch(error => {
+            console.error(error);
+            process.exitCode = 1;
+          });
+          NODE
