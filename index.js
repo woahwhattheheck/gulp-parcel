@@ -14,7 +14,7 @@ function removeDirectory(dir)
             }
             fs.rmdirSync(dir);
         } else {
-            fs.unlink(dir, (err) => {});
+            fs.unlinkSync(dir);
         }
     } catch (err) {
         if(err.code === 'ENOENT') {
@@ -45,9 +45,7 @@ module.exports = function GulpParcel(...options)
 
     return through.obj(function (file, encoding, cb) {
         if (!!file.contents) {
-            this.emit('error', new PluginError(PLUGIN_NAME, "File has already been processed"));
-            cb(null, file);
-            return;
+            return cb(new PluginError(PLUGIN_NAME, "File has already been processed"));
         }
 
         // slashes on unix os
@@ -56,13 +54,6 @@ module.exports = function GulpParcel(...options)
 
 		if( file.path.lastIndexOf(slashes) === -1){
 			slashes = '\\';
-        }
-
-        let out_flname;
-        if(g_options.source && !isTmp) {
-            out_flname = file.path.replace(source, options.outDir);
-        } else {
-            out_flname = options.outDir + slashes + file.path.substr(file.path.lastIndexOf(slashes) + 1);
         }
 
         let options_c = {}, outDir;
@@ -79,52 +70,66 @@ module.exports = function GulpParcel(...options)
         }
         options_c.outDir = outDir;
 
-        process.on('SIGINT', () => {
+        const onSigint = () => {
             if(isTmp) {
                 removeDirectory(options.outDir);
             }
             process.exit();
-        });
+        };
+        process.on('SIGINT', onSigint);
 
-        const parcel = new parcelBundler(file.path, options_c);
-        parcel.bundle().then(bundle => {
-            if(parcel.errored) {
-                if(isTmp) {
-                    removeDirectory(options.outDir);
-                }
-                this.emit('error', new PluginError(PLUGIN_NAME, "Build FAIL:" + file.path));
+        let finished = false;
+        const finish = err => {
+            if(finished) {
+                return;
+            }
+            finished = true;
+            if(!options.watch) {
+                process.removeListener('SIGINT', onSigint);
+            }
+            if(isTmp && (err || options.production)) {
+                removeDirectory(options.outDir);
+            }
+            if(err) {
+                cb(new PluginError(PLUGIN_NAME, err));
+            } else {
                 cb(null, file);
             }
+        };
 
-			// In case dealing with Pug files
-			// at this stage Pub files should've been transformed to html
-			if( out_flname.substr(out_flname.lastIndexOf('.') + 1).trim().toLowerCase() === 'pug' ){
-				out_flname = out_flname.substr(0, out_flname.lastIndexOf('.') + 1) + 'html';
-			}
-            try {
-                fs.readFile(out_flname, (err, data) => {
-                    // when out file name isn't correct/readable/accessible
-                    // data can be undefined
-					if(data === undefined){
-						var err = 'Unable to read to ' + out_flname;
-						throw err;
-					}
-                    file.contents = data;
-                    this.push(file);
-                    if(options.production && isTmp) {
-                        removeDirectory(options.outDir);
+        let parcel;
+        Promise.resolve().then(() => {
+            parcel = new parcelBundler(file.path, options_c);
+            return parcel.bundle();
+        }).then(bundle => {
+            if(parcel.error || parcel.errored) {
+                throw parcel.error || new Error("Build FAIL:" + file.path);
+            }
+            if(!bundle || typeof bundle.name !== 'string' || !bundle.name) {
+                throw new Error("Parcel did not return an output file for " + file.path);
+            }
+
+            // Parcel determines the final extension and honors outFile itself.
+            // Read that output instead of guessing a path from the input name.
+            fs.readFile(bundle.name, (err, data) => {
+                if(err) {
+                    return finish(err);
+                }
+                fs.stat(bundle.name, (err, stat) => {
+                    if(err) {
+                        return finish(err);
                     }
-                    cb(null, file);
+                    try {
+                        file.path = path.join(path.dirname(file.path), path.basename(bundle.name));
+                        file.contents = data;
+                        file.stat = stat;
+                    } catch(err) {
+                        return finish(err);
+                    }
+                    finish();
                 });
-                file.stat = fs.lstatSync(out_flname);
-            } catch (err) {
-                if(isTmp) {
-                    removeDirectory(options.outDir);
-                }
-                this.emit('error', new PluginError(PLUGIN_NAME, "Build FAIL:" + file.path));
-                cb(null, file);
-            }
-        });
+            });
+        }).catch(finish);
     });
 }
 
