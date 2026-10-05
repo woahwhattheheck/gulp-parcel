@@ -55,18 +55,18 @@ jobs:
 
           (async () => {
             const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gulp-parcel-1103-'));
-            const ok = path.join(root, 'entry.js');
-            fs.writeFileSync(ok, 'const value = 42; console.log(value);\n');
-            const success = await runTransform(ok, 'renamed.bundle.js');
+            const ok = path.join(root, 'entry.html');
+            fs.writeFileSync(ok, '<!doctype html><html><body>parcel-1103</body></html>\n');
+            const success = await runTransform(ok, 'renamed.bundle.html');
             if (success.error) throw success.error;
             if (success.output.length !== 1) throw new Error('expected exactly one successful Vinyl output, got ' + success.output.length);
             const out = success.output[0];
-            if (path.basename(out.path) !== 'renamed.bundle.js') throw new Error('expected Parcel outFile path renamed.bundle.js, got ' + out.path);
+            if (path.basename(out.path) !== 'renamed.bundle.html') throw new Error('expected Parcel outFile path renamed.bundle.html, got ' + out.path);
             if (!out.contents || !out.contents.length) throw new Error('expected compiled output bytes');
 
-            const bad = path.join(root, 'broken.js');
-            fs.writeFileSync(bad, 'const = ;\n');
-            const failure = await runTransform(bad, 'broken.bundle.js');
+            const bad = path.join(root, 'broken.html');
+            fs.writeFileSync(bad, '<!doctype html><html><body><script src="./missing.js"></script></body></html>\n');
+            const failure = await runTransform(bad, 'broken.bundle.html');
             if (!failure.error) throw new Error('expected broken Parcel build to reach stream error path');
             if (failure.errors !== 1) throw new Error('expected exactly one error callback, got ' + failure.errors);
             if (failure.output.length !== 0) throw new Error('failing build emitted duplicate/output Vinyl files: ' + failure.output.length);
