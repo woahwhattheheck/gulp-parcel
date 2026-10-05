@@ -85,4 +85,4 @@ jobs:
             process.exit(1);
           });
           NODE
-          node /tmp/gulp-parcel-integration.js
+          NODE_PATH="$PWD/node_modules" node /tmp/gulp-parcel-integration.js
