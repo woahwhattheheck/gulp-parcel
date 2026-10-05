@@ -40,6 +40,9 @@ module.exports = function GulpParcel(...options)
     options.production = (typeof(options.production) == "undefined") ? !options.watch : options.production;
     const isTmp = options.outDir ? false : true;
     options.outDir = options.outDir ? options.outDir : ('.tmp-gulp-compile-' + pid);
+    if(isTmp && typeof(options.publicURL) == "undefined" && typeof(options.publicUrl) == "undefined") {
+        options.publicURL = './';
+    }
 
     const source = g_options.source ? g_options.source : '';
 
@@ -86,14 +89,18 @@ module.exports = function GulpParcel(...options)
             process.exit();
         });
 
+        const failBuild = () => {
+            if(isTmp) {
+                removeDirectory(options.outDir);
+            }
+            cb(new PluginError(PLUGIN_NAME, "Build FAIL:" + file.path));
+        };
+
         const parcel = new parcelBundler(file.path, options_c);
         parcel.bundle().then(bundle => {
             if(parcel.errored) {
-                if(isTmp) {
-                    removeDirectory(options.outDir);
-                }
-                this.emit('error', new PluginError(PLUGIN_NAME, "Build FAIL:" + file.path));
-                cb(null, file);
+                failBuild();
+                return;
             }
 
 			// In case dealing with Pug files
@@ -102,6 +109,25 @@ module.exports = function GulpParcel(...options)
 				out_flname = out_flname.substr(0, out_flname.lastIndexOf('.') + 1) + 'html';
 			}
             try {
+                if(isTmp) {
+                    const emitBundle = output => {
+                        if(output.name && !output.isEmpty) {
+                            const outputFile = file.clone({contents: false});
+                            // Keep each entry's directory when moving its bundles out of temporary storage.
+                            outputFile.path = path.resolve(path.dirname(file.path), path.relative(options_c.outDir, output.name));
+                            outputFile.contents = fs.readFileSync(output.name);
+                            outputFile.stat = fs.statSync(output.name);
+                            this.push(outputFile);
+                        }
+                        output.childBundles.forEach(emitBundle);
+                    };
+                    emitBundle(bundle);
+                    if(options.production) {
+                        removeDirectory(options.outDir);
+                    }
+                    cb();
+                    return;
+                }
                 fs.readFile(out_flname, (err, data) => {
                     // when out file name isn't correct/readable/accessible
                     // data can be undefined
@@ -124,7 +150,7 @@ module.exports = function GulpParcel(...options)
                 this.emit('error', new PluginError(PLUGIN_NAME, "Build FAIL:" + file.path));
                 cb(null, file);
             }
-        });
+        }, failBuild);
     });
 }
 
