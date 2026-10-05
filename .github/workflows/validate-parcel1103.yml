@@ -1,0 +1,88 @@
+name: Validate Parcel 1.10.3 compatibility
+
+on:
+  push:
+    branches:
+      - validation/gulp-parcel-12-parcel1103-20261005
+
+jobs:
+  integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '14'
+      - name: Install exact integration dependencies
+        run: |
+          npm install --no-audit --no-fund
+          npm install --no-save --no-audit --no-fund parcel-bundler@1.10.3 vinyl@2.2.1
+      - name: Run real Parcel 1.10.3 plugin integration
+        run: |
+          cat > /tmp/gulp-parcel-integration.js <<'NODE'
+          const fs = require('fs');
+          const os = require('os');
+          const path = require('path');
+          const Vinyl = require('vinyl');
+          const gulpParcel = require(process.cwd());
+
+          function runTransform(inputPath) {
+            return new Promise((resolve, reject) => {
+              const stream = gulpParcel({ watch: false, production: true });
+              const output = [];
+              let errors = 0;
+              const timer = setTimeout(() => reject(new Error('transform timeout')), 30000);
+              stream.on('data', file => output.push(file));
+              stream.on('error', err => {
+                errors++;
+                clearTimeout(timer);
+                resolve({ output, errors, error: err });
+              });
+              stream.on('finish', () => {
+                clearTimeout(timer);
+                resolve({ output, errors, error: null });
+              });
+              stream.write(new Vinyl({
+                cwd: path.dirname(inputPath),
+                base: path.dirname(inputPath),
+                path: inputPath,
+                contents: null
+              }));
+              stream.end();
+            });
+          }
+
+          (async () => {
+            const root = fs.mkdtempSync(path.join(os.tmpdir(), 'gulp-parcel-1103-'));
+            const ok = path.join(root, 'entry.ts');
+            fs.writeFileSync(ok, 'const value: number = 42; console.log(value);\n');
+            const success = await runTransform(ok);
+            if (success.error) throw success.error;
+            if (success.output.length !== 1) throw new Error('expected exactly one successful Vinyl output, got ' + success.output.length);
+            const out = success.output[0];
+            if (path.extname(out.path) !== '.js') throw new Error('expected Parcel to rename .ts to .js, got ' + out.path);
+            if (!out.contents || !out.contents.length) throw new Error('expected compiled output bytes');
+
+            const bad = path.join(root, 'broken.js');
+            fs.writeFileSync(bad, 'const = ;\n');
+            const failure = await runTransform(bad);
+            if (!failure.error) throw new Error('expected broken Parcel build to reach stream error path');
+            if (failure.errors !== 1) throw new Error('expected exactly one error callback, got ' + failure.errors);
+            if (failure.output.length !== 0) throw new Error('failing build emitted duplicate/output Vinyl files: ' + failure.output.length);
+
+            console.log(JSON.stringify({
+              parcel: require('parcel-bundler/package.json').version,
+              node: process.version,
+              successOutputs: success.output.length,
+              outputName: path.basename(out.path),
+              outputBytes: out.contents.length,
+              failureErrors: failure.errors,
+              failureOutputs: failure.output.length
+            }, null, 2));
+          })().catch(error => {
+            console.error(error && error.stack || error);
+            process.exit(1);
+          });
+          NODE
+          node /tmp/gulp-parcel-integration.js
