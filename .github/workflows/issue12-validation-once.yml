@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: issue12-parcel-1.10.3-compat
+          ref: issuehunt/gulp-parcel-12-compat-20261005
       - uses: actions/setup-node@v4
         with:
           node-version: '14.21.3'
