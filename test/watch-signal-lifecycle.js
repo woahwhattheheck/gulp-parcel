@@ -10,8 +10,10 @@ const source = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
 const signals = new EventEmitter();
 signals.pid = process.pid;
 signals.exit = () => { throw new Error('SIGINT should not fire here'); };
+let stoppedParcels = 0;
 class FakeParcel {
   bundle() { return Promise.resolve({ name: '/fixtures/output.js' }); }
+  stop() { stoppedParcels++; return Promise.resolve(); }
 }
 class FakePluginError extends Error {
   constructor(name, problem) { super(String(problem)); this.plugin = name; }
@@ -66,6 +68,9 @@ const runFile = (stream, pathname) => new Promise((resolve, reject) => {
     'watch output must remain while the stream is active');
   watcher.emit('end');
   watcher.emit('close');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(stoppedParcels, 3,
+    'finished watcher stream must stop every Parcel watcher');
   assert.strictEqual(signals.listenerCount('SIGINT'), 0,
     'finished watchers must release their process handler');
   assert.strictEqual(removedDirectories.length, 1,
@@ -74,6 +79,9 @@ const runFile = (stream, pathname) => new Promise((resolve, reject) => {
   const destroyed = plugin({watch: true, production: false});
   await runFile(destroyed, '/fixtures/d.js');
   destroyed.emit('close');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(stoppedParcels, 4,
+    'destroyed watcher stream must stop its Parcel watcher');
   assert.strictEqual(signals.listenerCount('SIGINT'), 0,
     'destroyed watchers must release the handler');
   assert.strictEqual(removedDirectories.length, 2,
