@@ -10,7 +10,8 @@ let nextTemporaryOutputId = 0;
 function removeDirectory(dir)
 {
     try {
-        if(fs.statSync(dir).isDirectory()) {
+        // Do not follow links into other user directories during cleanup.
+        if(fs.lstatSync(dir).isDirectory()) {
            var files = fs.readdirSync(dir);
             for (var file in files) {
                 removeDirectory(dir + '/' + files[file])
