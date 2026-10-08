@@ -25,14 +25,21 @@ async function runCase(name, entry, source, outFile, expectError, explicitOutput
   fs.writeFileSync(path.join(directory, 'package.json'), '{"name":"parcel-dummy-fixture","version":"1.0.0"}\n');
   const oldCwd = process.cwd();
   process.chdir(directory);
-  const temporary = path.join(directory, '.tmp-gulp-compile-' + process.pid);
-  const output = explicitOutput ? path.join(directory, 'keep-output') : temporary;
+  const temporaryPrefix = '.tmp-gulp-compile-' + process.pid + '-';
+  const temporaryExists = () => fs.readdirSync(directory).some(name => name.startsWith(temporaryPrefix));
+  const output = explicitOutput ? path.join(directory, 'keep-output') : undefined;
   const beforeListeners = process.listenerCount('SIGINT');
-  const stream = plugin({
+  const pluginOptions = {
     watch: false, production: true, cache: false, sourceMaps: false,
     minify: false, logLevel: 0, throwErrors: true, autoInstall: false,
     outFile, ...(explicitOutput ? { outDir: output } : {}),
-  });
+  };
+  const originalPluginOptions = JSON.stringify(pluginOptions);
+  const stream = plugin(pluginOptions);
+  // Constructing a second stream with these same options must not inherit a
+  // generated outDir from the first, or lose failure-path cleanup ownership.
+  assert.strictEqual(JSON.stringify(pluginOptions), originalPluginOptions,
+    name + ': caller plugin options were modified');
   const files = [], errors = [];
   let callbacks = 0;
   stream.on('data', file => files.push(file));
@@ -76,10 +83,12 @@ async function runCase(name, entry, source, outFile, expectError, explicitOutput
   }
   assert.strictEqual(callbacks, 1, name + ': callback completes exactly once');
   assert.strictEqual(process.listenerCount('SIGINT'), beforeListeners, name + ': signal listener released');
-  assert.strictEqual(fs.existsSync(output), Boolean(explicitOutput), name + ': output retention/cleanup');
+  assert.strictEqual(Boolean(output && fs.existsSync(output)), Boolean(explicitOutput),
+    name + ': output retention/cleanup');
+  assert.strictEqual(temporaryExists(), false, name + ': temporary build root not cleaned');
   receipts.push({ name, entry, outFile, emitted: files.length, errorEvents: errors.length, callbacks,
-    listenerDelta: process.listenerCount('SIGINT') - beforeListeners, temporaryRemoved: !fs.existsSync(temporary),
-    explicitOutputRetained: Boolean(explicitOutput && fs.existsSync(output)) });
+    listenerDelta: process.listenerCount('SIGINT') - beforeListeners, temporaryRemoved: !temporaryExists(),
+    explicitOutputRetained: Boolean(output && fs.existsSync(output)) });
   process.chdir(oldCwd);
 }
 
