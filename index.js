@@ -146,11 +146,7 @@ module.exports = function GulpParcel(...options)
                     });
                 });
             } catch (err) {
-                if(isTmp) {
-                    removeDirectory(options.outDir);
-                }
-                this.emit('error', new PluginError(PLUGIN_NAME, "Build FAIL:" + file.path));
-                cb(null, file);
+                failBuild();
             }
         }, failBuild);
     });
