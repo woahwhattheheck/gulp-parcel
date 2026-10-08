@@ -4,6 +4,9 @@ const path = require('path');
 const through = require('through2');
 const PluginError = require('plugin-error');
 
+// Different GulpParcel() instances in one build must not share a build root.
+let nextTemporaryOutputId = 0;
+
 function removeDirectory(dir)
 {
     try {
@@ -36,10 +39,15 @@ module.exports = function GulpParcel(...options)
         options = options[0];
     }
 
+    // The caller may reuse this options object for multiple plugin streams.
+    // Never mark a generated temporary outDir as if they supplied it.
+    options = Object.assign({}, options);
     options.watch = (typeof(options.watch) == "undefined") ? false : options.watch;
     options.production = (typeof(options.production) == "undefined") ? !options.watch : options.production;
     const isTmp = options.outDir ? false : true;
-    options.outDir = options.outDir ? options.outDir : ('.tmp-gulp-compile-' + pid);
+    options.outDir = options.outDir
+        ? options.outDir
+        : ('.tmp-gulp-compile-' + pid + '-' + (++nextTemporaryOutputId));
 
     const source = g_options.source ? g_options.source : '';
 
