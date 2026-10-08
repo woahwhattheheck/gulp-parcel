@@ -206,6 +206,7 @@ module.exports = function GulpParcel(...options)
         // mean another teardown path already owns the active watcher snapshot.
         stopActiveParcels().then(cleanupOutput);
     };
+    stream.once('finish', finalizeStream);
     stream.once('end', finalizeStream);
     stream.once('close', finalizeStream);
     return stream;
