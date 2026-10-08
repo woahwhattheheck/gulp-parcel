@@ -129,20 +129,22 @@ module.exports = function GulpParcel(...options)
                     return;
                 }
                 fs.readFile(out_flname, (err, data) => {
-                    // when out file name isn't correct/readable/accessible
-                    // data can be undefined
-					if(data === undefined){
-						var err = 'Unable to read to ' + out_flname;
-						throw err;
-					}
-                    file.contents = data;
-                    this.push(file);
-                    if(options.production && isTmp) {
-                        removeDirectory(options.outDir);
+                    // Explicit output directories settle through this callback only.
+                    // Never throw from an async callback or forward the same Vinyl twice.
+                    if(err || data === undefined) {
+                        cb(new PluginError(PLUGIN_NAME, "Build FAIL:" + file.path));
+                        return;
                     }
-                    cb(null, file);
+                    fs.lstat(out_flname, (statErr, stat) => {
+                        if(statErr) {
+                            cb(new PluginError(PLUGIN_NAME, "Build FAIL:" + file.path));
+                            return;
+                        }
+                        file.contents = data;
+                        file.stat = stat;
+                        cb(null, file);
+                    });
                 });
-                file.stat = fs.lstatSync(out_flname);
             } catch (err) {
                 if(isTmp) {
                     removeDirectory(options.outDir);
