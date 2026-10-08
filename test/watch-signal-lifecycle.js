@@ -16,9 +16,21 @@ class FakeParcel {
 class FakePluginError extends Error {
   constructor(name, problem) { super(String(problem)); this.plugin = name; }
 }
+const removedDirectories = [];
 const fakeFs = {
   readFile(_name, cb) { cb(null, Buffer.from('built')); },
   stat(_name, cb) { cb(null, { size: 5 }); },
+  lstatSync(name) {
+    if (name.startsWith('.tmp-gulp-compile-')) {
+      return { isDirectory: () => true };
+    }
+    const error = new Error('missing fake path');
+    error.code = 'ENOENT';
+    throw error;
+  },
+  readdirSync() { return []; },
+  rmdirSync(name) { removedDirectories.push(name); },
+  unlinkSync() { throw new Error('unexpected fake unlink'); },
 };
 const context = { module: {exports: {}}, process: signals, Buffer };
 context.require = name => {
@@ -42,7 +54,7 @@ const runFile = (stream, pathname) => new Promise((resolve, reject) => {
     (err, file) => err ? reject(err) : resolve(file));
 });
 (async () => {
-  const watcher = plugin({watch: true, production: false, outDir: '/build'});
+  const watcher = plugin({watch: true, production: false});
   assert.strictEqual(signals.listenerCount('SIGINT'), 0);
   await runFile(watcher, '/fixtures/a.js');
   assert.strictEqual(signals.listenerCount('SIGINT'), 1);
@@ -50,16 +62,24 @@ const runFile = (stream, pathname) => new Promise((resolve, reject) => {
   await runFile(watcher, '/fixtures/c.js');
   assert.strictEqual(signals.listenerCount('SIGINT'), 1,
     'three files in a watcher must share one handler');
+  assert.strictEqual(removedDirectories.length, 0,
+    'watch output must remain while the stream is active');
   watcher.emit('end');
   watcher.emit('close');
   assert.strictEqual(signals.listenerCount('SIGINT'), 0,
     'finished watchers must release their process handler');
+  assert.strictEqual(removedDirectories.length, 1,
+    'end+close must clean the generated watch root exactly once');
 
-  const destroyed = plugin({watch: true, production: false, outDir: '/build'});
+  const destroyed = plugin({watch: true, production: false});
   await runFile(destroyed, '/fixtures/d.js');
   destroyed.emit('close');
   assert.strictEqual(signals.listenerCount('SIGINT'), 0,
     'destroyed watchers must release the handler');
+  assert.strictEqual(removedDirectories.length, 2,
+    'destroyed watcher must clean its generated watch root');
+  assert.notStrictEqual(removedDirectories[0], removedDirectories[1],
+    'independent watchers must clean distinct generated roots');
 
   const normal = plugin({watch: false, production: false, outDir: '/build'});
   await runFile(normal, '/fixtures/e.js');
