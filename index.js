@@ -52,6 +52,11 @@ module.exports = function GulpParcel(...options)
 
     const source = g_options.source ? g_options.source : '';
 
+    // Parcel 1.10 creates a filesystem watcher and worker farm for every
+    // watch-mode Bundler. Keep those instances so stream teardown can call
+    // Bundler.stop() instead of leaking watchers after the Gulp stream closes.
+    const activeParcels = new Set();
+
     // A watch stream may process thousands of files; it must not register
     // a separate process signal handler per incoming file.
     let onSigint = null;
@@ -120,6 +125,9 @@ module.exports = function GulpParcel(...options)
         let parcel;
         Promise.resolve().then(() => {
             parcel = new parcelBundler(file.path, options_c);
+            if(options.watch) {
+                activeParcels.add(parcel);
+            }
             return parcel.bundle();
         }).then(bundle => {
             if(parcel.error || parcel.errored) {
@@ -151,18 +159,35 @@ module.exports = function GulpParcel(...options)
             });
         }).catch(finish);
     });
-    // Keep the watcher handler across file completions, not beyond the stream,
-    // and remove a generated watch output root once the stream is finished.
+    // Keep the watcher handler across file completions, not beyond the stream.
+    // Parcel 1.10's Bundler.stop() owns watcher/HMR/worker-farm shutdown, so
+    // stop every watch Bundler before deleting its generated output root.
     let streamFinalized = false;
+    const stopActiveParcels = () => {
+        const parcels = Array.from(activeParcels);
+        activeParcels.clear();
+        return Promise.all(parcels.map(parcel =>
+            Promise.resolve()
+                .then(() => (parcel && typeof parcel.stop === 'function') ? parcel.stop() : undefined)
+                .catch(() => undefined)
+        ));
+    };
     const finalizeStream = () => {
         if(streamFinalized) {
             return;
         }
         streamFinalized = true;
         releaseSigint();
-        if(isTmp) {
-            removeDirectory(options.outDir);
+        const cleanupOutput = () => {
+            if(isTmp) {
+                removeDirectory(options.outDir);
+            }
+        };
+        if(activeParcels.size === 0) {
+            cleanupOutput();
+            return;
         }
+        stopActiveParcels().then(cleanupOutput);
     };
     stream.once('end', finalizeStream);
     stream.once('close', finalizeStream);
