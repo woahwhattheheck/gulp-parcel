@@ -46,7 +46,7 @@ module.exports = function GulpParcel(...options)
 
     const source = g_options.source ? g_options.source : '';
 
-    return through.obj(function (file, encoding, cb) {
+    const stream = through.obj(function (file, encoding, cb) {
         if (!!file.contents) {
             this.emit('error', new PluginError(PLUGIN_NAME, "File has already been processed"));
             cb(null, file);
@@ -81,13 +81,6 @@ module.exports = function GulpParcel(...options)
             outDir = options.outDir + slashes + outDir;
         }
         options_c.outDir = outDir;
-
-        process.on('SIGINT', () => {
-            if(isTmp) {
-                removeDirectory(options.outDir);
-            }
-            process.exit();
-        });
 
         const failBuild = () => {
             if(isTmp) {
@@ -150,6 +143,22 @@ module.exports = function GulpParcel(...options)
             }
         }, failBuild);
     });
+
+    const onSigInt = () => {
+        if(isTmp) {
+            removeDirectory(options.outDir);
+        }
+        process.exit();
+    };
+    const detachSigInt = () => {
+        process.removeListener('SIGINT', onSigInt);
+    };
+
+    process.on('SIGINT', onSigInt);
+    stream.once('finish', detachSigInt);
+    stream.once('close', detachSigInt);
+
+    return stream;
 }
 
 
