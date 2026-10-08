@@ -166,11 +166,16 @@ module.exports = function GulpParcel(...options)
     const stopActiveParcels = () => {
         const parcels = Array.from(activeParcels);
         activeParcels.clear();
-        return Promise.all(parcels.map(parcel =>
-            Promise.resolve()
-                .then(() => (parcel && typeof parcel.stop === 'function') ? parcel.stop() : undefined)
-                .catch(() => undefined)
-        ));
+        // Parcel Bundlers in one process can share a WorkerFarm. Stop them
+        // serially so concurrent Bundler.stop() calls cannot race while ending
+        // that shared farm.
+        return parcels.reduce((chain, parcel) =>
+            chain.then(() =>
+                Promise.resolve()
+                    .then(() => (parcel && typeof parcel.stop === 'function') ? parcel.stop() : undefined)
+                    .catch(() => undefined)
+            ),
+        Promise.resolve());
     };
     const finalizeStream = () => {
         if(streamFinalized) {
