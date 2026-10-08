@@ -52,7 +52,16 @@ module.exports = function GulpParcel(...options)
 
     const source = g_options.source ? g_options.source : '';
 
-    return through.obj(function (file, encoding, cb) {
+    // A watch stream may process thousands of files; it must not register
+    // a separate process signal handler per incoming file.
+    let onSigint = null;
+    const releaseSigint = () => {
+        if(onSigint) {
+            process.removeListener('SIGINT', onSigint);
+            onSigint = null;
+        }
+    };
+    const stream = through.obj(function (file, encoding, cb) {
         if (!!file.contents) {
             return cb(new PluginError(PLUGIN_NAME, "File has already been processed"));
         }
@@ -79,13 +88,15 @@ module.exports = function GulpParcel(...options)
         }
         options_c.outDir = outDir;
 
-        const onSigint = () => {
-            if(isTmp) {
-                removeDirectory(options.outDir);
-            }
-            process.exit();
-        };
-        process.on('SIGINT', onSigint);
+        if(!onSigint) {
+            onSigint = () => {
+                if(isTmp) {
+                    removeDirectory(options.outDir);
+                }
+                process.exit();
+            };
+            process.on('SIGINT', onSigint);
+        }
 
         let finished = false;
         const finish = err => {
@@ -94,7 +105,7 @@ module.exports = function GulpParcel(...options)
             }
             finished = true;
             if(!options.watch) {
-                process.removeListener('SIGINT', onSigint);
+                releaseSigint();
             }
             if(isTmp && (err || options.production)) {
                 removeDirectory(options.outDir);
@@ -140,6 +151,10 @@ module.exports = function GulpParcel(...options)
             });
         }).catch(finish);
     });
+    // Keep the watcher handler across file completions, not beyond the stream.
+    stream.once('end', releaseSigint);
+    stream.once('close', releaseSigint);
+    return stream;
 }
 
 
