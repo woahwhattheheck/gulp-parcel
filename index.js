@@ -118,7 +118,8 @@ module.exports = function GulpParcel(...options)
             if(!options.watch) {
                 releaseSigint();
             }
-            if(isTmp && (err || options.production)) {
+            // Watch Bundlers share this generated root until stream teardown.
+            if(isTmp && !options.watch && (err || options.production)) {
                 removeDirectory(options.outDir);
             }
             if(err) {
