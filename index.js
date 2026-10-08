@@ -7,14 +7,17 @@ const PluginError = require('plugin-error');
 function removeDirectory(dir)
 {
     try {
-        if(fs.statSync(dir).isDirectory()) {
+        if(fs.lstatSync(dir).isDirectory()) {
            var files = fs.readdirSync(dir);
             for (var file in files) {
-                removeDirectory(dir + '/' + files[file])
+                removeDirectory(path.join(dir, files[file]));
             }
             fs.rmdirSync(dir);
         } else {
-            fs.unlink(dir, (err) => {});
+            // Parent directories are removed synchronously below, so their children
+            // must be removed synchronously too. lstat also keeps cleanup inside the
+            // temp tree instead of following directory symlinks.
+            fs.unlinkSync(dir);
         }
     } catch (err) {
         if(err.code === 'ENOENT') {
