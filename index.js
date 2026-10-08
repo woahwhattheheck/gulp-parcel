@@ -95,10 +95,16 @@ module.exports = function GulpParcel(...options)
 
         if(!onSigint) {
             onSigint = () => {
-                if(isTmp) {
-                    removeDirectory(options.outDir);
-                }
-                process.exit();
+                // Stop Parcel's watch resources before removing their output
+                // tree or terminating the process. Removing the tree first can
+                // race active watchers and the shared WorkerFarm.
+                releaseSigint();
+                stopActiveParcels().then(() => {
+                    if(isTmp) {
+                        removeDirectory(options.outDir);
+                    }
+                    process.exit();
+                });
             };
             process.on('SIGINT', onSigint);
         }
@@ -163,19 +169,26 @@ module.exports = function GulpParcel(...options)
     // Parcel 1.10's Bundler.stop() owns watcher/HMR/worker-farm shutdown, so
     // stop every watch Bundler before deleting its generated output root.
     let streamFinalized = false;
+    let stoppingParcels = null;
     const stopActiveParcels = () => {
+        // SIGINT and stream end/close can race. Share the same stop promise so
+        // cleanup never runs ahead of an already-started watcher shutdown.
+        if(stoppingParcels) {
+            return stoppingParcels;
+        }
         const parcels = Array.from(activeParcels);
         activeParcels.clear();
         // Parcel Bundlers in one process can share a WorkerFarm. Stop them
         // serially so concurrent Bundler.stop() calls cannot race while ending
         // that shared farm.
-        return parcels.reduce((chain, parcel) =>
+        stoppingParcels = parcels.reduce((chain, parcel) =>
             chain.then(() =>
                 Promise.resolve()
                     .then(() => (parcel && typeof parcel.stop === 'function') ? parcel.stop() : undefined)
                     .catch(() => undefined)
             ),
         Promise.resolve());
+        return stoppingParcels;
     };
     const finalizeStream = () => {
         if(streamFinalized) {
@@ -188,10 +201,8 @@ module.exports = function GulpParcel(...options)
                 removeDirectory(options.outDir);
             }
         };
-        if(activeParcels.size === 0) {
-            cleanupOutput();
-            return;
-        }
+        // Always join an in-flight SIGINT stop before cleanup; an empty set can
+        // mean another teardown path already owns the active watcher snapshot.
         stopActiveParcels().then(cleanupOutput);
     };
     stream.once('end', finalizeStream);

@@ -9,7 +9,8 @@ const EventEmitter = require('events');
 const source = fs.readFileSync(path.join(__dirname, '..', 'index.js'), 'utf8');
 const signals = new EventEmitter();
 signals.pid = process.pid;
-signals.exit = () => { throw new Error('SIGINT should not fire here'); };
+let exitCalls = 0;
+signals.exit = () => { exitCalls++; };
 let stoppedParcels = 0;
 class FakeParcel {
   bundle() { return Promise.resolve({ name: '/fixtures/output.js' }); }
@@ -88,6 +89,19 @@ const runFile = (stream, pathname) => new Promise((resolve, reject) => {
     'destroyed watcher must clean its generated watch root');
   assert.notStrictEqual(removedDirectories[0], removedDirectories[1],
     'independent watchers must clean distinct generated roots');
+
+  const interrupted = plugin({watch: true, production: false});
+  await runFile(interrupted, '/fixtures/signal.js');
+  signals.emit('SIGINT');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(stoppedParcels, 5,
+    'SIGINT must stop the active Parcel watcher before process exit');
+  assert.strictEqual(signals.listenerCount('SIGINT'), 0,
+    'SIGINT teardown must immediately release its handler');
+  assert.strictEqual(removedDirectories.length, 3,
+    'SIGINT teardown must clean the generated root after watcher shutdown');
+  assert.strictEqual(exitCalls, 1,
+    'SIGINT teardown must exit exactly once after watcher shutdown');
 
   const normal = plugin({watch: false, production: false, outDir: '/build'});
   await runFile(normal, '/fixtures/e.js');
