@@ -13,7 +13,13 @@ let exitCalls = 0;
 signals.exit = () => { exitCalls++; };
 let stoppedParcels = 0;
 class FakeParcel {
-  bundle() { return Promise.resolve({ name: '/fixtures/output.js' }); }
+  constructor(entry) { this.entry = entry; }
+  bundle() {
+    if (this.entry.endsWith('/broken.js')) {
+      return Promise.reject(new Error('watch build failed'));
+    }
+    return Promise.resolve({ name: '/fixtures/output.js' });
+  }
   stop() { stoppedParcels++; return Promise.resolve(); }
 }
 class FakePluginError extends Error {
@@ -107,5 +113,26 @@ const runFile = (stream, pathname) => new Promise((resolve, reject) => {
   await runFile(normal, '/fixtures/e.js');
   assert.strictEqual(signals.listenerCount('SIGINT'), 0,
     'nonwatch builds still release after each completion');
+  const failedWatch = plugin({watch: true, production: false});
+  let watchError = null;
+  try {
+    await runFile(failedWatch, '/fixtures/broken.js');
+  } catch (error) {
+    watchError = error;
+  }
+  assert(watchError, 'failed watch transform must report its Parcel error');
+  assert(String(watchError).includes('watch build failed'));
+  assert.strictEqual(removedDirectories.length, 3,
+    'one failed watch build must not delete the shared generated root');
+  assert.strictEqual(signals.listenerCount('SIGINT'), 1,
+    'failed watch stream retains teardown ownership until close');
+  failedWatch.emit('close');
+  await new Promise(resolve => setImmediate(resolve));
+  assert.strictEqual(stoppedParcels, 6,
+    'closing the failed watch stream stops its Parcel watcher');
+  assert.strictEqual(signals.listenerCount('SIGINT'), 0,
+    'closing the failed watch stream releases its signal handler');
+  assert.strictEqual(removedDirectories.length, 4,
+    'failed watch output is cleaned once at stream teardown');
   console.log('Focused watcher signal lifecycle regression passed');
 })().catch(err => { console.error(err); process.exitCode = 1; });
