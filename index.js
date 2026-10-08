@@ -151,9 +151,21 @@ module.exports = function GulpParcel(...options)
             });
         }).catch(finish);
     });
-    // Keep the watcher handler across file completions, not beyond the stream.
-    stream.once('end', releaseSigint);
-    stream.once('close', releaseSigint);
+    // Keep the watcher handler across file completions, not beyond the stream,
+    // and remove a generated watch output root once the stream is finished.
+    let streamFinalized = false;
+    const finalizeStream = () => {
+        if(streamFinalized) {
+            return;
+        }
+        streamFinalized = true;
+        releaseSigint();
+        if(isTmp) {
+            removeDirectory(options.outDir);
+        }
+    };
+    stream.once('end', finalizeStream);
+    stream.once('close', finalizeStream);
     return stream;
 }
 
